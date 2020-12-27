@@ -1,8 +1,25 @@
 -- 0.1
 CREATE DATABASE RentACar;
-
 -- 0.2
 USE RentACar;
+-- 0.3
+CREATE FUNCTION RoundInHalfDays(@DurationInHours as decimal(10,2))
+RETURNS decimal(10,2)
+AS
+BEGIN
+	declare @DurationInDays			decimal(10, 2) = @DurationInHours / 24.00;
+	declare @RoundedDurationInDays	decimal(10, 2);
+
+	SET @RoundedDurationInDays = CASE
+		WHEN (@DurationInDays % 1 = 0.00 OR @DurationInDays % 1 = 0.50 ) 
+			THEN cast(@DurationInDays as decimal(10, 2))
+		WHEN (@DurationInDays % 1) > 0.50 
+			THEN cast(CEILING(@DurationInDays) as decimal(10, 2))
+		WHEN (@DurationInDays % 1) < 0.50 
+			THEN cast(FLOOR(@DurationInDays) as decimal(10, 2)) + 0.50
+	END
+RETURN @RoundedDurationInDays;
+END;
 
 
 -- 1. Set of creations
@@ -13,21 +30,11 @@ CREATE TABLE Employees(
 	PIN nvarchar(20) NOT NULL UNIQUE
 );
 
-CREATE TABLE Customers(
-	Id int IDENTITY(1, 1) PRIMARY KEY,
-	FirstName nvarchar(100) NOT NULL,
-	LastName nvarchar(100) NOT NULL,
-	PIN nvarchar(20) NOT NULL UNIQUE,
-	CreditCardNumber nvarchar(100) NOT NULL,
-	DriverLicenceNumber nvarchar(100) NOT NULL,
-	DateOfBirth datetime2 NOT NULL CHECK (DATEDIFF(year, DateOfBirth, SYSDATETIME()) >= 18)
-);
-
 CREATE TABLE TariffClasses(
 	Id int IDENTITY(1, 1) PRIMARY KEY,
 	[Name] nvarchar(20) NOT NULL,
-	SummerDailyPrice smallmoney NOT NULL CHECK (SummerDailyPrice >= 0),
-	WinterDailyPrice smallmoney NOT NULL CHECK (WinterDailyPrice >= 0)
+	SummerHalfDayPrice decimal(10, 2) NOT NULL CHECK (SummerHalfDayPrice >= 0.0),
+	WinterHalfDayPrice decimal(10, 2) NOT NULL CHECK (WinterHalfDayPrice >= 0.0)
 );
 
 
@@ -54,15 +61,38 @@ CREATE TABLE Registrations(
 CREATE TABLE Rents(
 	Id int IDENTITY(1, 1) PRIMARY KEY,
 	StartTime datetime2 NOT NULL,
-	EndTime datetime2 NOT NULL ,
+	EndTime datetime2 NOT NULL,
+	RoundedDuration decimal(10, 2),
+	CustomerFirstName nvarchar(100) NOT NULL,
+	CustomerLastName nvarchar(100) NOT NULL,
+	CustomerPIN nvarchar(20) NOT NULL,
+	CustomerCreditCardNumber nvarchar(100) NOT NULL,
+	CustomerDriverLicenceNumber nvarchar(100) NOT NULL,
+	CustomerDateOfBirth datetime2 NOT NULL CHECK (DATEDIFF(year, CustomerDateOfBirth, SYSDATETIME()) >= 18),
 	VehicleId int FOREIGN KEY REFERENCES Vehicles(Id) NOT NULL,
-	EmployeeId int FOREIGN KEY REFERENCES Employees(Id) NOT NULL,
-	CustomerId int FOREIGN KEY REFERENCES Customers(Id) NOT NULL
+	EmployeeId int FOREIGN KEY REFERENCES Employees(Id) NOT NULL
 );
 
+-- 4.Set
 ALTER TABLE Rents ADD CHECK (StartTime < EndTime);
 
-CREATE TRIGGER VehicleAvailabilityCheck ON Rents
+
+-- 5.Set
+CREATE TRIGGER CalculateRoundedRentDuration
+ON Rents
+AFTER INSERT
+AS
+BEGIN
+	declare @FullDuration decimal(10,2);
+
+	UPDATE Rents
+	SET Rents.RoundedDuration = [dbo].RoundInHalfDays(CAST(DATEDIFF(HOUR, StartTime, EndTime) as decimal));
+END
+GO
+
+-- 6. set
+CREATE TRIGGER VehicleAvailabilityCheck 
+ON Rents
 AFTER INSERT
 AS
 	declare @OverlappingRentsCount	int;
